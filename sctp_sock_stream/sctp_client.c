@@ -15,16 +15,52 @@
   62324 /* This can be changed to suit the need and should be same in server \
            and client */
 
+void sendToServer(int connSock) {
+  char sendbuffer[MAX_BUFFER + 1] = "HI !! This is client";
+  int sendbufferlen = 0;
+  sendbuffer[strcspn(sendbuffer, "\r\n")] = 0;
+  sendbufferlen = strlen(sendbuffer);
+
+  int ret = sctp_sendmsg(connSock, (void *)sendbuffer, (size_t)sendbufferlen,
+                         NULL, 0, 0, 0, 0, 0, 0);
+  if (ret == -1) {
+    printf("Error in sctp_sendmsg\n");
+    perror("sctp_sendmsg()");
+  } else
+    printf("Successfully sent %d bytes data to server\n", ret);
+}
+
+void receiveFromServer(int connSock) {
+  int flags;
+  struct sctp_sndrcvinfo sndrcvinfo;
+  char receivebuffer[MAX_BUFFER + 1];
+  bzero(receivebuffer, MAX_BUFFER + 1);
+
+  int in = sctp_recvmsg(connSock, receivebuffer, sizeof(receivebuffer),
+                        (struct sockaddr *)NULL, 0, &sndrcvinfo, &flags);
+
+  if (in == -1) {
+    printf("Error in sctp_recvmsg\n");
+    perror("sctp_recvmsg()");
+    close(connSock);
+    //   continue;
+  } else {
+    // Add '\0' in case of text data
+    receivebuffer[in] = '\0';
+
+    printf(" Length of Data received: %d\n", in);
+    printf(" Data : %s\n", (char *)receivebuffer);
+  }
+}
+
 int main(int argc, char *argv[]) {
-  int connSock, i, ret, flags, rd_sz;
-  struct sockaddr_in servaddr, peeraddr;
-  // struct sctp_status status;
-  struct sctp_event_subscribe events;
-  struct sctp_sndrcvinfo sri;
-  socklen_t len;
+  int connSock, i, ret, flags;
+  struct sockaddr_in servaddr;
+  struct sctp_status status;
 
   // Establish connection
-  connSock = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);
+  connSock = socket(AF_INET, SOCK_STREAM, IPPROTO_SCTP);
+
   if (connSock == -1) {
     printf("Socket creation failed\n");
     perror("socket()");
@@ -45,43 +81,15 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  bzero(&events, sizeof(events));
-  events.sctp_data_io_event = 1;
-  setsockopt(connSock, IPPROTO_SCTP, SCTP_EVENTS, &events, sizeof(events));
-
   //----------------------------------------------
-  bzero(&sri, sizeof(sri));
-  int count = 0;
-  while (count <= 5) {
-    sri.sinfo_stream = 0;
-    char sendbuffer[MAX_BUFFER + 1] = "HI !! This is client";
-    int sendbufferlen = 0;
-    sendbuffer[strcspn(sendbuffer, "\r\n")] = 0;
-    sendbufferlen = strlen(sendbuffer);
+  while (1) {
+    sendToServer(connSock);
+    // sleep(5);
+    receiveFromServer(connSock);
 
-    sctp_sendmsg(connSock, sendbuffer, sendbufferlen,
-                 (struct sockaddr *)&servaddr, sizeof(servaddr), 0, 0,
-                 sri.sinfo_stream, 0, 0);
-
-    char receivebuffer[MAX_BUFFER + 1];
-    bzero(receivebuffer, MAX_BUFFER + 1);
     sleep(1);
-    len = sizeof(peeraddr);
-    rd_sz = sctp_recvmsg(connSock, receivebuffer, sizeof(receivebuffer),
-                         (struct sockaddr *)&peeraddr, &len, &sri, &flags);
-    // if (rd_sz == -1) {
-    //   printf("Error in sctp_recvmsg\n");
-    //   perror("sctp_recvmsg()");
-    //   close(connSock);
-    //   //   continue;
-    // } else {
-    printf("From str:%d seq:%d (assoc:0x%x):", sri.sinfo_stream, sri.sinfo_ssn,
-           (u_int)sri.sinfo_assoc_id);
-    printf("%.*s", rd_sz, receivebuffer);
-    printf("\n");
-    count++;
-    // }
   }
+
   close(connSock);
   // close (connSock);
   // while (1);

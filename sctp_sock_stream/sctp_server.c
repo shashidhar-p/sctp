@@ -14,19 +14,56 @@
 /* This can be changed to suit the need and should be same in server \
          and client */
 
+void sendToClient(int connSock, struct sockaddr_in *cliaddr) {
+  char sendbuffer[MAX_BUFFER + 1] = "HI !! This is Server";
+  int sendbufferlen = 0;
+  sendbuffer[strcspn(sendbuffer, "\r\n")] = 0;
+  sendbufferlen = strlen(sendbuffer);
+
+  int ret = sctp_sendmsg(connSock, (void *)sendbuffer, (size_t)sendbufferlen,
+                         (struct sockaddr *)cliaddr, 0, 0, 0, 0, 0, 0);
+
+  if (ret == -1) {
+    printf("Error in sctp_sendmsg\n");
+    perror("sctp_sendmsg()");
+  } else
+    printf("Successfully sent %d bytes data to client\n", ret);
+}
+
+void receiveFromClient(int connSock, struct sockaddr_in *cliaddr) {
+  int flags;
+  struct sctp_sndrcvinfo sndrcvinfo;
+  char receivebuffer[MAX_BUFFER + 1];
+  // Clear the buffer
+  bzero(receivebuffer, MAX_BUFFER + 1);
+
+  int in = sctp_recvmsg(connSock, receivebuffer, sizeof(receivebuffer),
+                        (struct sockaddr *)cliaddr, 0, &sndrcvinfo, &flags);
+
+  if (in == -1) {
+    printf("Error in sctp_recvmsg\n");
+    perror("sctp_recvmsg()");
+    close(connSock);
+    //   continue;
+  } else {
+    // Add '\0' in case of text data
+    receivebuffer[in] = '\0';
+
+    printf(" Length of Data received: %d\n", in);
+    printf(" Data : %s\n", (char *)receivebuffer);
+  }
+}
+
 int main() {
-  int connSock, ret, in, flags, i;
+  int listenSock, connSock, ret, in, flags, i;
   struct sockaddr_in servaddr, cliaddr;
-  struct sctp_sndrcvinfo sri;
-  // struct sctp_initmsg initmsg;
+  struct sctp_initmsg initmsg;
   struct sctp_event_subscribe events;
-  socklen_t len;
-  int rd_sz;
 
   //   char buffer[MAX_BUFFER + 1];
 
-  connSock = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);
-  if (connSock == -1) {
+  listenSock = socket(AF_INET, SOCK_STREAM, IPPROTO_SCTP);
+  if (listenSock == -1) {
     printf("Failed to create socket\n");
     perror("socket()");
     exit(1);
@@ -37,65 +74,58 @@ int main() {
   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
   servaddr.sin_port = htons(MY_PORT_NUM);
 
-  ret = bind(connSock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+  ret = bind(listenSock, (struct sockaddr *)&servaddr, sizeof(servaddr));
 
   if (ret == -1) {
     printf("Bind failed \n");
     perror("bind()");
-    close(connSock);
+    close(listenSock);
     exit(1);
   }
 
-  bzero(&events, sizeof(events));
-  events.sctp_data_io_event = 1;
-  ret =
-      setsockopt(connSock, IPPROTO_SCTP, SCTP_EVENTS, &events, sizeof(events));
+  /* Specify that a maximum of 5 streams will be available per socket */
+  memset(&initmsg, 0, sizeof(initmsg));
+  initmsg.sinit_num_ostreams = 5;
+  initmsg.sinit_max_instreams = 5;
+  initmsg.sinit_max_attempts = 4;
+  ret = setsockopt(listenSock, IPPROTO_SCTP, SCTP_INITMSG, &initmsg,
+                   sizeof(initmsg));
 
   if (ret == -1) {
     printf("setsockopt() failed \n");
     perror("setsockopt()");
-    close(connSock);
+    close(listenSock);
     exit(1);
   }
 
-  ret = listen(connSock, 5);
+  ret = listen(listenSock, 5);
   if (ret == -1) {
     printf("listen() failed \n");
     perror("listen()");
-    close(connSock);
+    close(listenSock);
     exit(1);
   }
-  char receivebuffer[MAX_BUFFER + 1];
-  // Clear the buffer
-  bzero(receivebuffer, MAX_BUFFER + 1);
-  int count = 0;
-  while (1) {
-    len = sizeof(struct sockaddr_in);
-    rd_sz = sctp_recvmsg(connSock, receivebuffer, sizeof(receivebuffer),
-                         (struct sockaddr *)&cliaddr, &len, &sri, &flags);
 
-    if (rd_sz == -1) {
-      printf("Error in sctp_recvmsg\n");
-      perror("sctp_recvmsg()");
-      close(connSock);
-    } else {
-      printf("From str:%d seq:%d (assoc:0x%x):", sri.sinfo_stream,
-             sri.sinfo_ssn, (u_int)sri.sinfo_assoc_id);
-      printf("%.*s", rd_sz, receivebuffer);
-      printf("\n");
-    }
+  printf("Awaiting a new connection\n");
 
-    char sendbuffer[MAX_BUFFER + 1] = "HI !! This is Server";
-    int sendbufferlen = 0;
-    sendbuffer[strcspn(sendbuffer, "\r\n")] = 0;
-    sendbufferlen = strlen(sendbuffer);
-
-    sctp_sendmsg(connSock, sendbuffer, sendbufferlen,
-                 (struct sockaddr *)&cliaddr, len, sri.sinfo_ppid,
-                 sri.sinfo_flags, sri.sinfo_stream, 0, 0);
-    sleep(1);
-    count++;
+  connSock = accept(listenSock, (struct sockaddr *)NULL, (int *)NULL);
+  if (connSock == -1) {
+    printf("accept() failed %s\n", strerror(errno));
+    perror("accept()");
+    // close(connSock);
+    exit(0);
+  } else {
+    printf("New client connected....= %d\n", connSock);
+    // system ("cat /proc/net/sctp/assocs");
   }
+
+  while (1) {
+    receiveFromClient(connSock, &cliaddr);
+    sleep(1);
+    sendToClient(connSock, &cliaddr);
+  }
+
   close(connSock);
+
   return 0;
 }
